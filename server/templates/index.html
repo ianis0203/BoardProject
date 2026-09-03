@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VaultGuard Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+</head>
+<body class="bg-gray-900 text-white font-sans antialiased">
+    <div class="container mx-auto px-4 py-8 max-w-5xl">
+        
+        <!-- Header -->
+        <header class="flex justify-between items-center mb-8 border-b border-gray-700 pb-4">
+            <h1 class="text-3xl font-bold flex items-center gap-3">
+                🛡️ VaultGuard <span class="text-gray-400 text-lg font-normal">Command Center</span>
+            </h1>
+            <div id="connectionStatus" class="px-3 py-1 rounded-full bg-gray-700 text-sm font-semibold flex items-center gap-2">
+                <div class="w-2 h-2 rounded-full bg-yellow-500" id="connIndicator"></div>
+                Connecting...
+            </div>
+        </header>
+
+        <!-- Main Status Indicator -->
+        <div class="flex justify-center mb-10">
+            <div id="mainStatus" class="transition-all duration-500 w-full max-w-lg text-center p-8 rounded-2xl bg-gray-800 border-4 border-gray-700 shadow-2xl">
+                <h2 class="text-gray-400 text-xl font-semibold mb-2">SYSTEM STATUS</h2>
+                <div id="statusText" class="text-5xl font-black tracking-widest text-gray-500">WAITING</div>
+                <p id="statusSubtext" class="mt-4 text-gray-400">Waiting for Vault Node telemetry...</p>
+            </div>
+        </div>
+
+        <!-- Telemetry Stats Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-10">
+            <div class="bg-gray-800 p-4 rounded-lg border border-gray-700">
+                <p class="text-gray-400 text-sm">Last Event</p>
+                <p id="valEvent" class="text-xl font-bold text-white">N/A</p>
+            </div>
+            <div class="bg-gray-800 p-4 rounded-lg border border-gray-700">
+                <p class="text-gray-400 text-sm">Rolling Code</p>
+                <p id="valCode" class="text-xl font-mono text-blue-400">000000</p>
+            </div>
+            <div class="bg-gray-800 p-4 rounded-lg border border-gray-700">
+                <p class="text-gray-400 text-sm">Tilt Dynamics (X/Y)</p>
+                <p id="valTilt" class="text-xl font-mono text-white">0.00 / 0.00</p>
+            </div>
+            <div class="bg-gray-800 p-4 rounded-lg border border-gray-700">
+                <p class="text-gray-400 text-sm">Last Contact</p>
+                <p id="valTime" class="text-xl font-bold text-white">00:00 ago</p>
+            </div>
+        </div>
+
+        <!-- Event Log -->
+        <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+            <div class="px-6 py-4 border-b border-gray-700 bg-gray-900">
+                <h3 class="font-bold text-lg">Security Log</h3>
+            </div>
+            <div class="overflow-y-auto max-h-64">
+                <table class="w-full text-left text-sm">
+                    <thead class="bg-gray-700 text-gray-300 sticky top-0">
+                        <tr>
+                            <th class="px-6 py-3">Timestamp</th>
+                            <th class="px-6 py-3">Event Type</th>
+                            <th class="px-6 py-3">Code</th>
+                            <th class="px-6 py-3">Details</th>
+                        </tr>
+                    </thead>
+                    <tbody id="logTableBody" class="divide-y divide-gray-700">
+                        <!-- Logs inject here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Frontend Logic -->
+    <script>
+        const socket = io();
+        let lastContactTime = Date.now();
+        
+        // DOM Elements
+        const elMainStatus = document.getElementById('mainStatus');
+        const elStatusText = document.getElementById('statusText');
+        const elStatusSubtext = document.getElementById('statusSubtext');
+        
+        const elConnIndicator = document.getElementById('connIndicator');
+        const elConnectionStatus = document.getElementById('connectionStatus');
+        const elLogTableBody = document.getElementById('logTableBody');
+
+        // Update Timer interval
+        setInterval(() => {
+            const secondsAgo = Math.floor((Date.now() - lastContactTime) / 1000);
+            const mins = Math.floor(secondsAgo / 60).toString().padStart(2, '0');
+            const secs = (secondsAgo % 60).toString().padStart(2, '0');
+            document.getElementById('valTime').innerText = `${mins}:${secs} ago`;
+            
+            // Highlight timer if it's been over 65 mins (dead-man switch warning)
+            if(secondsAgo > 3900) {
+                document.getElementById('valTime').classList.add('text-yellow-500');
+            }
+        }, 1000);
+
+        socket.on('connect', () => {
+            elConnIndicator.classList.replace('bg-yellow-500', 'bg-green-500');
+            elConnIndicator.classList.replace('bg-red-500', 'bg-green-500');
+            elConnectionStatus.childNodes[2].nodeValue = ' Live';
+        });
+
+        socket.on('disconnect', () => {
+            elConnIndicator.classList.replace('bg-green-500', 'bg-red-500');
+            elConnectionStatus.childNodes[2].nodeValue = ' Disconnected';
+        });
+
+        function appendLog(time, event, code, details, isError = false) {
+            const row = document.createElement('tr');
+            const colorClass = isError ? 'text-red-400 font-bold' : (event === 'Heartbeat' ? 'text-gray-400' : 'text-yellow-400');
+            row.innerHTML = `
+                <td class="px-6 py-3">${time}</td>
+                <td class="px-6 py-3 ${colorClass}">${event}</td>
+                <td class="px-6 py-3 font-mono">${code}</td>
+                <td class="px-6 py-3">${details}</td>
+            `;
+            elLogTableBody.prepend(row);
+        }
+
+        socket.on('vault_update', function(data) {
+            lastContactTime = Date.now();
+            document.getElementById('valTime').classList.remove('text-yellow-500');
+            
+            // Update Stats
+            document.getElementById('valEvent').innerText = data.event;
+            document.getElementById('valCode').innerText = String(data.rolling_code).padStart(6, '0');
+            document.getElementById('valTilt').innerText = `${data.tilt_x.toFixed(2)} / ${data.tilt_y.toFixed(2)}`;
+
+            // Update Main Status Visuals
+            elMainStatus.className = "transition-all duration-500 w-full max-w-lg text-center p-8 rounded-2xl border-4 shadow-2xl";
+            
+            if (data.status === "SECURE") {
+                elMainStatus.classList.add("bg-green-900", "border-green-500");
+                elStatusText.innerText = "SECURE";
+                elStatusText.className = "text-5xl font-black tracking-widest text-green-400";
+                elStatusSubtext.innerText = "Vault is locked and stationary.";
+            } else if (data.status === "BREACHED") {
+                elMainStatus.classList.add("bg-red-900", "border-red-500", "animate-pulse");
+                elStatusText.innerText = "BREACHED";
+                elStatusText.className = "text-5xl font-black tracking-widest text-red-400";
+                elStatusSubtext.innerText = "🚨 ALARM TRIGGERED 🚨";
+            }
+
+            appendLog(data.time, data.event, data.rolling_code, `Tilt: X=${data.tilt_x.toFixed(1)} Y=${data.tilt_y.toFixed(1)}`);
+        });
+
+        socket.on('security_alert', function(data) {
+            elMainStatus.className = "transition-all duration-500 w-full max-w-lg text-center p-8 rounded-2xl bg-yellow-900 border-4 border-yellow-500 shadow-2xl animate-pulse";
+            elStatusText.innerText = "WARNING";
+            elStatusText.className = "text-5xl font-black tracking-widest text-yellow-400";
+            elStatusSubtext.innerText = data.message;
+            
+            appendLog(data.time, "SECURITY ALERT", "---", data.message, true);
+        });
+    </script>
+</body>
+</html>
